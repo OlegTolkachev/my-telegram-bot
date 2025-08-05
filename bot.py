@@ -1,12 +1,26 @@
 import logging
+from threading import Thread
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, ChatJoinRequestHandler
 
 # Конфигурация
 BOT_TOKEN = "8377374186:AAH9mLRNJxS6VjIvdWkxlFJkoRU5a0lEpSM"
-CHANNEL_ID = -1001989783724  # Канал для проверки подписки
+CHANNEL_ID = -1001989783724  # ID канала для проверки подписки
 GROUP_ID = -1002873957981    # ID группы для автопринятия заявок
 GROUP_INVITE_LINK = "https://t.me/+W60fzUwV7DE2YTZi"  # Ваша готовая ссылка
+
+# Фикс для Render Free Tier (предотвращает "засыпание")
+keep_alive = Flask(__name__)
+
+@keep_alive.route('/')
+def home():
+    return "Bot keep-alive is active!"
+
+def run_flask():
+    keep_alive.run(host='0.0.0.0', port=5000)
+
+Thread(target=run_flask, daemon=True).start()
 
 # Настройка логгирования
 logging.basicConfig(
@@ -17,66 +31,87 @@ logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await update.message.reply_text(f"🔍 Проверяю подписку на канал, {user.first_name}...")
-
     try:
-        bot = context.bot
+        await update.message.reply_text(f"🔍 Проверяю подписку, {user.first_name}...")
         
-        # Проверяем подписку на канал
-        chat_member = await bot.get_chat_member(CHANNEL_ID, user.id)
-        
-        if chat_member.status not in ["member", "administrator", "creator"]:
-            await update.message.reply_text("❌ Ты не подписан на канал! Подпишись и попробуй снова.")
-            logger.info(f"Отказ: пользователь {user.id} не подписан на канал")
+        # Проверка подписки с таймаутом
+        try:
+            chat_member = await context.bot.get_chat_member(
+                chat_id=CHANNEL_ID,
+                user_id=user.id,
+                read_timeout=10,
+                write_timeout=10
+            )
+        except Exception as e:
+            logger.error(f"Ошибка проверки подписки: {e}")
+            await update.message.reply_text("⌛ Сервер перегружен. Попробуйте через минуту.")
             return
 
-        # Отправляем готовую ссылку
-        await bot.send_message(
-            chat_id=user.id,
-            text=f"✅ Доступ открыт! Жми на ссылку:\n\n{GROUP_INVITE_LINK}"
-        )
-        logger.info(f"Пользователь {user.id} получил ссылку")
+        if chat_member.status not in ["member", "administrator", "creator"]:
+            await update.message.reply_text("❌ Вы не подписаны на необходимый канал!")
+            return
+
+        # Отправка ссылки
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=f"✅ Ваша ссылка: {GROUP_INVITE_LINK}",
+                disable_web_page_preview=True
+            )
+            logger.info(f"Пользователь {user.id} получил ссылку")
+        except Exception as e:
+            logger.error(f"Ошибка отправки: {e}")
+            await update.message.reply_text("⚠️ Не могу отправить ссылку. Напишите мне в личные сообщения @YourBot.")
 
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("⚠️ Ошибка. Сообщите админу.")
+        logger.critical(f"Критическая ошибка: {e}")
+        await update.message.reply_text("🔴 Произошла системная ошибка. Админ уведомлен.")
 
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.chat_join_request.from_user
     try:
-        # Проверяем подписку на канал
-        chat_member = await context.bot.get_chat_member(CHANNEL_ID, user.id)
+        # Проверка подписки
+        chat_member = await context.bot.get_chat_member(
+            CHANNEL_ID,
+            user.id,
+            read_timeout=10
+        )
         
         if chat_member.status in ["member", "administrator", "creator"]:
-            # Одобряем заявку
             await update.chat_join_request.approve()
             await context.bot.send_message(
                 chat_id=user.id,
-                text="✅ Ваша заявка одобрена! Добро пожаловать в группу."
+                text="🎉 Добро пожаловать в группу!"
             )
-            logger.info(f"Заявка одобрена для {user.id}")
+            logger.info(f"Заявка одобрена: {user.id}")
         else:
             await update.chat_join_request.decline()
             await context.bot.send_message(
                 chat_id=user.id,
-                text="❌ Вы не подписаны на наш канал. Подпишитесь и подайте заявку снова."
+                text="❌ Вы не подписаны на необходимый канал!"
             )
-            logger.info(f"Заявка отклонена для {user.id}")
+            logger.info(f"Заявка отклонена: {user.id}")
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке заявки: {e}")
+        logger.error(f"Ошибка обработки заявки: {e}")
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Инициализация с таймаутами
+    app = Application.builder() \
+        .token(BOT_TOKEN) \
+        .read_timeout(20) \
+        .write_timeout(20) \
+        .build()
     
-    # Обработчик команды /start
+    # Обработчики
     app.add_handler(CommandHandler("start", start))
-    
-    # Обработчик заявок на вступление (НОВАЯ ФУНКЦИЯ)
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     
-    logger.info("Бот запущен с поддержкой заявок на вступление!")
-    app.run_polling()
+    logger.info("🟢 Бот запущен | Версия 3.1 | Render Fix")
+    app.run_polling(
+        close_loop=False,
+        drop_pending_updates=True
+    )
 
 if __name__ == "__main__":
     main()
