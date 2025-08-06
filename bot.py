@@ -1,7 +1,7 @@
 import logging
 from threading import Thread
 from flask import Flask
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, ChatJoinRequestHandler
 
 # Конфигурация
@@ -51,17 +51,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Вы не подписаны на необходимый канал!")
             return
 
-        # Отправка ссылки
-        try:
-            await context.bot.send_message(
-                chat_id=user.id,
-                text=f"✅ Ваша ссылка: {GROUP_INVITE_LINK}",
-                disable_web_page_preview=True
-            )
-            logger.info(f"Пользователь {user.id} получил ссылку")
-        except Exception as e:
-            logger.error(f"Ошибка отправки: {e}")
-            await update.message.reply_text("⚠️ Не могу отправить ссылку. Напишите мне в личные сообщения @YourBot.")
+        # Красивое оформление сообщения с кнопкой
+        keyboard = [
+            [InlineKeyboardButton("👉 ПРИСОЕДИНИТЬСЯ К ГРУППЕ", url=GROUP_INVITE_LINK)]
+        ]
+        
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="✅ <b>Доступ открыт!</b>\n\nЖмите на кнопку ниже:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML',
+            disable_web_page_preview=True
+        )
+        logger.info(f"Пользователь {user.id} получил ссылку")
 
     except Exception as e:
         logger.critical(f"Критическая ошибка: {e}")
@@ -107,7 +109,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     
-    logger.info("🟢 Бот запущен | Версия 3.1 | Render Fix")
+    logger.info("🟢 Бот запущен | Версия 3.2 | Render Fix")
     app.run_polling(
         close_loop=False,
         drop_pending_updates=True
